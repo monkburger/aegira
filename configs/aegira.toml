@@ -1,0 +1,758 @@
+# ==========================================================================
+#  aegira.toml — Aegira WAF configuration reference
+#
+#  Every key is documented.  Commented values show the default.
+#  Uncommented values are sensible production defaults.
+#
+#  Run `aegira --config aegira.toml --check-config` to validate without
+#  starting the daemon.  Send the reload_signal (default SIGHUP) to
+#  hot-reload config, rules, and TLS certificates without downtime.
+# ==========================================================================
+
+# Schema version.  Must be 1.  Checked at load time.
+config_version = 1
+
+
+# --------------------------------------------------------------------------
+#  [server]  Process lifecycle
+# --------------------------------------------------------------------------
+[server]
+
+# Maximum time to wait for in-flight requests to complete during a clean
+# shutdown (SIGTERM / SIGINT).  Requests still being served after this
+# deadline are terminated.  Duration string: "30s", "2m", etc.
+graceful_shutdown_timeout = "30s"
+
+# Maximum time to wait for in-flight requests to drain after a SIGHUP
+# reload.  During this window old TLS contexts and rules remain active
+# for connections that started before the reload.
+graceful_reload_timeout = "5m"
+
+# Unix signal that triggers a hot reload of config, rules, and TLS
+# certificates.  Only "SIGHUP" is supported.
+reload_signal = "SIGHUP"
+
+
+# --------------------------------------------------------------------------
+#  [listener]  Front-end network listener
+# --------------------------------------------------------------------------
+[listener]
+
+# Address and port to bind.  ":443" binds all interfaces on port 443.
+# Use "127.0.0.1:8443" or "[::1]:8443" to restrict to a specific address.
+bind = ":443"
+
+# Protocol versions to serve.  At least one of http1/http2 must be true.
+serve_http1 = true
+serve_http2 = true
+
+# HTTP/3 (QUIC).  Requires a UDP listener on the same port.  Experimental.
+serve_http3 = true
+
+# Maximum total size of request headers (all header lines combined).
+# Requests exceeding this limit receive 431 Request Header Fields Too Large.
+max_header_size = "64KiB"
+
+# Timeout for reading the complete request headers from the client.
+# Defends against slowloris-style attacks.
+read_timeout = "15s"
+
+# Timeout for writing the complete response to the client.
+write_timeout = "30s"
+
+# Time a keep-alive connection may sit idle before the server closes it.
+idle_timeout = "90s"
+
+
+# --------------------------------------------------------------------------
+#  [tls]  TLS termination
+# --------------------------------------------------------------------------
+[tls]
+
+# Master TLS switch.  When false the listener accepts plain HTTP.
+enabled = true
+
+# Default certificate and key used when no [[site]] matches the SNI, or
+# when SNI is absent and missing_sni = "use_default_site".
+default_certificate = "/etc/aegira/certs/default/fullchain.pem"
+default_private_key = "/etc/aegira/certs/default/privkey.pem"
+
+# Minimum TLS version to accept.  "1.2" or "1.3".  Clients offering only
+# older versions will fail the handshake.
+minimum_version = "1.2"
+
+# Policy when the ClientHello SNI name matches no configured [[site]].
+# "reject"           — abort the TLS handshake (send alert)
+# "use_default_site" — fall through to the first [[site]]
+unknown_sni = "reject"
+
+# Policy when the ClientHello contains no SNI extension at all.
+# Same values as unknown_sni.
+missing_sni = "use_default_site"
+
+# Policy when the HTTP Host header does not match the TLS SNI name.
+# "reject" — return 421 Misdirected Request
+# "log"    — log a warning and continue normally
+authority_mismatch = "reject"
+
+# Re-read certificate and key files from disk on every SIGHUP reload.
+# Enables zero-downtime certificate rotation (e.g. after certbot renew).
+reload_certificates_on_sighup = true
+
+# --- RFC 6797 HTTP Strict Transport Security (HSTS) ----------------------
+#
+# Tells browsers to contact this host over HTTPS only for max-age seconds.
+# The header is injected on every response served over TLS.
+#   Strict-Transport-Security: max-age=63072000; includeSubDomains
+#
+# Enable only after confirming HTTPS is fully stable.
+
+# Inject the Strict-Transport-Security response header.
+# WARNING: The coded default is false.  Commenting out this line disables HSTS.
+hsts_enabled = true
+
+# Duration (seconds) the browser should remember the HSTS policy.
+# 63072000 = 2 years, which meets the browser preload-list minimum.
+hsts_max_age_seconds = 63072000
+
+# Append "includeSubDomains" to the HSTS header.  Applies the policy to
+# every subdomain.  Required for preload-list submission.
+hsts_include_subdomains = true
+
+# Append "preload" to the HSTS header.  Set to true only after submitting
+# the domain to https://hstspreload.org.  Irreversible in practice.
+hsts_preload = false
+
+# --- TLS session ticket key rotation (RFC 8446 §4.6.3) -------------------
+#
+# Session tickets allow clients to resume TLS sessions without a full
+# handshake.  Rotating the ticket encryption key limits the window in
+# which a stolen key can decrypt recorded sessions.
+#
+# 0      — disable rotation; use a single rustls-managed key
+# 21600  — rotate every 6 hours (recommended for production)
+# WARNING: The coded default is 0 (disabled).  Commenting out this line
+#          stops ticket rotation entirely.
+ticket_rotation_seconds = 21600
+
+
+# --------------------------------------------------------------------------
+#  [[site]]  Virtual hosts (SNI-based routing)
+#
+#  At least one site is required.  The first site is
+#  the default for unknown/missing SNI policies.
+# --------------------------------------------------------------------------
+
+[[site]]
+
+# The hostname to match against the TLS SNI and HTTP Host header.
+server_name = "example.com"
+
+# Per-site TLS certificate and private key.
+certificate = "/etc/aegira/certs/example.com/fullchain.pem"
+private_key = "/etc/aegira/certs/example.com/privkey.pem"
+
+# Name of the [[backend]] to forward clean (non-blocked) requests to.
+forward_to = "app_main"
+
+# Name of the [[backend]] to forward requests to when a rule with
+# action = "forward" matches (e.g. a honeypot).  Falls back to
+# waf.default_forward_target when omitted.
+forward_target = "honeypot"
+
+# Pass the original Host header to the backend unchanged.  When false
+# the backend sees the backend_address as the Host.
+preserve_host_header = true
+
+# Copy the TLS SNI name to the backend connection (when using TLS to
+# the backend).  Useful when the backend's TLS expects its own hostname.
+send_sni_to_backend = true
+
+# Operating mode for this virtual host.
+# "normal"  — enforce all rule actions (drop/forward/log)
+# "observe" — downgrade drop and forward to log; WAF acts as a read-only
+#             sensor.  Use this to tune new rules before enforcement.
+# mode = "observe"
+
+# Per-site anomaly score threshold.  Overrides waf.anomaly_score_threshold
+# for this site only.  Omit or set to null to use the global threshold.
+# anomaly_score_threshold = 50
+
+# Rule IDs to disable for this site only.  These rules are skipped entirely
+# during request inspection.  Useful for site-specific exceptions.
+# disabled_rules = [42, 99]
+
+[[site]]
+server_name          = "api.example.com"
+certificate          = "/etc/aegira/certs/api.example.com/fullchain.pem"
+private_key          = "/etc/aegira/certs/api.example.com/privkey.pem"
+forward_to           = "api_main"
+preserve_host_header = true
+send_sni_to_backend  = true
+
+
+# --------------------------------------------------------------------------
+#  [waf]  Core WAF engine settings
+# --------------------------------------------------------------------------
+[waf]
+
+# Action when no rule matches a request.  Currently only "allow" is
+# supported (default-deny is planned).
+default_action = "allow"
+
+# Default [[backend]] name for action = "forward" rules, used when the
+# matching [[site]] has no forward_target of its own.
+default_forward_target = "honeypot"
+
+# Behaviour when the WAF engine itself errors (regex panic, OOM, etc.).
+# "fail_open"   — let the request through (availability over security)
+# "fail_closed" — block the request with 500 (security over availability)
+on_engine_error = "fail_open"
+
+# Behaviour when a SIGHUP reload produces invalid config or rules.
+# "keep_running_with_old_rules" — continue serving with the previous
+#   config and log an error.  This is the only supported value.
+on_rule_reload_error = "keep_running_with_old_rules"
+
+# HTTP header carrying a trace / correlation ID.  If the client sends this
+# header its value is forwarded to the backend and included in audit logs.
+# If the header is absent, aegira generates a random UUID.
+request_id_header = "X-Request-ID"
+
+# Log a warning when a rule that already produced the winning action
+# matches again at lower priority.  Helps detect redundant rules.
+warn_on_ignored_matches = true
+
+# Stop evaluating rules after this many matches in a single request.
+# Protects against pathological rulesets that would cause O(n) scans.
+max_matches_per_request = 32
+
+# Global anomaly score threshold.  When the cumulative score from all
+# matching rules meets or exceeds this value, the request is blocked
+# with 403 regardless of the individual rule actions.
+# Set to null to disable score-based blocking (rules still score but
+# the total has no enforcement effect).
+anomaly_score_threshold = 50
+
+# Rule IDs to disable globally across all sites.  These rules are
+# compiled but skipped during inspection.  Use for emergency suppression.
+disabled_rules = []
+
+
+# --------------------------------------------------------------------------
+#  [protocol_support]  Specialised protocol handling
+# --------------------------------------------------------------------------
+[protocol_support]
+
+# How much of a gRPC request to feed through the WAF engine.
+# "headers_only" — inspect request metadata; skip the binary-framed body
+# "off"          — return 501 Not Implemented for all gRPC traffic
+grpc_inspection = "headers_only"
+
+# How much of a WebSocket upgrade request to inspect.
+# "handshake_only" — inspect the HTTP upgrade handshake; pass the
+#                    connection through after the upgrade completes
+# "off"            — return 501 Not Implemented for all WebSocket upgrades
+websocket_inspection = "handshake_only"
+
+
+# --------------------------------------------------------------------------
+#  [request_inspection]  What and how to inspect on inbound requests
+# --------------------------------------------------------------------------
+[request_inspection]
+
+# Master toggles for each inspection surface.  Setting any of these to
+# false empties the corresponding engine input, so rules targeting that
+# surface will never match.
+inspect_headers      = true
+inspect_query_string = true
+inspect_body         = true
+
+# How request bodies are handled during inspection.
+# "buffered"  — buffer the full body before forwarding (required for body
+#               rules to see the complete payload)
+# "streaming" — stream the body without buffering (body rules see nothing)
+# "both"      — buffer up to max_body_to_buffer, then stream the remainder
+body_mode = "both"
+
+# Maximum body size to hold in memory before switching to disk spill
+# (when spill_large_bodies_to_disk = true) or rejecting with 413
+# (when spill is disabled).
+max_body_to_buffer = "1MiB"
+
+# Maximum body size the WAF engine will scan.  Bodies larger than this
+# are rejected with 413 Payload Too Large when spill is disabled, or
+# spilled to disk when enabled.
+max_body_to_scan = "8MiB"
+
+# When true, bodies exceeding max_body_to_buffer are streamed to a
+# temporary file in spill_directory rather than rejected.  The file is
+# read back for forwarding.  Prevents OOM on large uploads.
+spill_large_bodies_to_disk = true
+
+# Directory for temporary body spool files.  Must be writable by the
+# aegira process.  Files are removed after each request completes.
+spill_directory = "/var/lib/aegira/spool"
+
+# Decode structured content types before feeding them to the rule engine.
+# The decoded values are appended to the raw body so rules can match both
+# representations.
+decode_form_data = true   # application/x-www-form-urlencoded
+decode_json      = true   # application/json (top-level string values)
+decode_multipart = true   # multipart/form-data (part values)
+
+# Normalise percent-encoded characters (%2e → ., %3C → <) in the URL path
+# and query string before matching.  Prevents trivial WAF bypasses.
+normalize_url_encoding = true
+
+# Decode HTML entities (&lt; → <, &#60; → <, &#x3C; → <) in all
+# inspection surfaces before matching.  Catches entity-encoded XSS.
+normalize_html_entities = true
+
+# Apply Unicode NFKC normalisation (fullwidth Ａ → A, etc.) to all
+# inspection surfaces before matching.  Catches Unicode-smuggled attacks.
+normalize_unicode = true
+
+# Decompress gzip / deflate request bodies (Content-Encoding header)
+# before feeding them to the rule engine.  The original compressed bytes
+# are forwarded to the backend unchanged.  Decompression output is capped
+# at max_body_to_scan to prevent zip-bomb attacks.
+decompress_body = true
+
+# Parse Cookie header values into individual name=value pairs as a
+# first-class engine target ("cookies" in rule definitions).
+# Rules targeting "cookies" operate on parsed pairs which are harder to
+# evade with whitespace or encoding tricks.
+inspect_cookies = true
+
+
+# --------------------------------------------------------------------------
+#  [response_inspection]  What to inspect on backend responses
+# --------------------------------------------------------------------------
+[response_inspection]
+
+# Inspect response headers with rules that target "response_headers".
+inspect_headers = true
+
+# Inspect response bodies with rules that target "response_body".
+# Requires response_body_mode = "buffered".  Disabled by default because
+# buffering all response bodies has a significant performance cost.
+inspect_body = false
+
+# Response body buffering mode.
+# "off"      — do not buffer response bodies (stream directly to client)
+# "buffered" — buffer the response body for rule inspection
+response_body_mode = "off"
+
+# Strip the "Server" header from backend responses to hide the backend
+# technology stack.  The Python backend's "Server: BaseHTTP/..." header,
+# nginx's "Server: nginx/...", etc. will be removed.
+remove_server_headers = true
+
+# Strip "X-Powered-By" headers from backend responses (e.g.
+# "X-Powered-By: PHP/8.2", "X-Powered-By: Express").
+remove_powered_by_headers = true
+
+# Maximum response body size to scan when response body inspection is
+# enabled.  Larger bodies are truncated for scanning but forwarded in
+# full to the client.
+max_body_to_scan = "512KiB"
+
+
+# --------------------------------------------------------------------------
+#  [forwarded_headers]  Proxy header injection and trust
+# --------------------------------------------------------------------------
+[forwarded_headers]
+
+# Trust incoming X-Forwarded-For / Forwarded headers from upstream proxies.
+# When true and the direct peer IP is in trust_forwarded_headers_from, the
+# leftmost untrusted address is used as the client IP for rate limiting,
+# IP filtering, and audit logging.
+# WARNING: enabling this without a correct trust list lets clients spoof
+# their IP address.
+trust_forwarded_headers = false
+
+# CIDRs of trusted upstream proxies.  Only relevant when
+# trust_forwarded_headers = true.  The direct TCP peer must be in this
+# list for forwarded headers to be trusted.
+trust_forwarded_headers_from = ["127.0.0.1/32", "::1/128"]
+
+# Inject / append these standard proxy headers before forwarding to the
+# backend.  The backend sees the real client information.
+set_x_forwarded_for   = true   # X-Forwarded-For:   <client IP>
+set_x_forwarded_proto = true   # X-Forwarded-Proto: https
+set_x_forwarded_host  = true   # X-Forwarded-Host:  <original Host>
+
+# Enable HAProxy PROXY protocol v1/v2 parsing on the listener.  The
+# upstream load balancer must send a PROXY header on every connection.
+# When enabled, the client address from the PROXY header replaces the
+# TCP socket address for all IP-based decisions (rate limiting, IP
+# filtering, X-Forwarded-For, logging).
+# proxy_protocol = false
+
+# Parse the IETF-standard "Forwarded:" header (RFC 7239) in addition to
+# the de-facto X-Forwarded-For when resolving the real client IP.  The
+# Forwarded header is preferred when both are present.
+parse_forwarded_header = false
+
+
+# --------------------------------------------------------------------------
+#  [ip_filter]  Source IP allow/block lists
+#
+#  Evaluated before any WAF rule inspection.  CIDR notation.
+#  Block is checked first: if the source IP matches, the request is
+#  rejected immediately with 403.  If allow is non-empty, only IPs in
+#  that list are permitted — everything else gets 403.
+# --------------------------------------------------------------------------
+[ip_filter]
+
+# CIDRs that are always blocked.
+# Example: block = ["198.51.100.0/24", "203.0.113.5/32"]
+block = []
+
+# If non-empty, only connections from these CIDRs are allowed.
+# An empty list means "allow everyone" (subject to block).
+# Example: allow = ["10.0.0.0/8", "172.16.0.0/12"]
+allow = []
+
+
+# --------------------------------------------------------------------------
+#  [rate_limit]  Per-source-IP token-bucket rate limiter
+#
+#  Each source IP gets a token bucket refilling at requests_per_second
+#  with a maximum burst of burst_size.  When the bucket is empty, the
+#  exceeded_action determines the response.
+# --------------------------------------------------------------------------
+[rate_limit]
+
+# Master switch.  When false, no rate limiting is applied.
+enabled = false
+
+# Sustained request rate per source IP (tokens added per second).
+requests_per_second = 100
+
+# Maximum burst size above the sustained rate (bucket capacity).
+burst_size = 200
+
+# What to do when a source IP exhausts its token bucket.
+# "reject" — return 429 Too Many Requests
+# "log"    — log the event and allow the request through
+exceeded_action = "reject"
+
+
+# --------------------------------------------------------------------------
+#  [schema_enforcement]  Positive security model
+#
+#  Validate JSON request bodies against an OpenAPI 3.x specification
+#  before the regex engine runs.  Endpoints not declared in the spec
+#  are unaffected.  Bodies that violate the schema are rejected with
+#  HTTP 400.
+#
+#  This is opt-in.  When enabled = false (default), no spec is loaded
+#  and no validation occurs.  Enabling this adds a JSON parse step on
+#  every request with a JSON content type, so measure the latency impact
+#  under your expected load before deploying.
+#
+#  The spec file must be JSON (not YAML).  Convert with any JSON/YAML
+#  tool: e.g. `python3 -c 'import sys,json,yaml; json.dump(yaml.safe_load(open(sys.argv[1])),open(sys.argv[2],"w"))' spec.yaml spec.json`
+#
+#  On Unix, the spec file must not be world-writable.  A world-writable
+#  spec lets any local user alter the validation contract.
+# --------------------------------------------------------------------------
+[schema_enforcement]
+
+# Master switch.
+enabled = false
+
+# Path to a JSON OpenAPI 3.0 or 3.1 spec file.
+# Relative paths are resolved from the directory containing this config.
+# openapi_spec_path = "openapi.json"
+
+# Maximum body size (bytes) that schema enforcement will parse.
+# Bodies exceeding this limit are rejected before JSON parsing begins.
+# Default: 1048576 (1 MiB).
+# max_body_bytes = 1048576
+
+# Maximum JSON nesting depth.  Deeply nested structures are rejected
+# before schema evaluation to prevent stack exhaustion.  Default: 64.
+# max_depth = 64
+
+# When true, requests to method + path combinations not declared in the
+# spec are rejected with 400 before reaching the regex engine.  This
+# makes the spec the single source of truth for which endpoints exist.
+# When false, unlisted endpoints pass through to the regex pipeline.
+# Default: false.
+# reject_unknown_endpoints = false
+
+
+# --------------------------------------------------------------------------
+#  [rules]  Rule loading
+# --------------------------------------------------------------------------
+[rules]
+
+# Path to the rules entrypoint file.  Relative paths are resolved from
+# the directory containing this config file.  The entrypoint can include
+# other files via the `include` array (supports globs).
+entrypoint = "rules/main.toml"
+
+# Maximum depth of include chains.  Prevents accidental infinite loops
+# in rule file includes.
+max_include_depth = 16
+
+
+# --------------------------------------------------------------------------
+#  [[backend]]  Upstream backends
+#
+#  At least one backend is required.  Backends are referenced by name
+#  from [[site]].forward_to, [[site]].forward_target, [[route]].forward_to,
+#  and waf.default_forward_target.
+#
+#  Transport / protocol compatibility matrix:
+#  ┌───────────────┬───────┬───────┬───────┬──────┐
+#  │ forward_using  │ http1 │ http2 │ http3 │ auto │
+#  ├───────────────┼───────┼───────┼───────┼──────┤
+#  │ plain_http    │  yes  │ h2c   │  NO   │ http1│
+#  │ tls           │  yes  │  h2   │  (*)  │ ALPN │
+#  │ unix_socket   │  yes  │  no   │  no   │ http1│
+#  └───────────────┴───────┴───────┴───────┴──────┘
+#  (*) http3 is parsed but not available in the stable build.
+#      QUIC is a UDP transport — it cannot run over a TCP socket or a
+#      plain-text connection.  A future release may support it with
+#      forward_using = "tls" only.
+#
+#  Rule of thumb:
+#    plain_http  →  http1 (or h2c if the backend supports cleartext HTTP/2)
+#    tls         →  auto  (ALPN negotiation picks the best protocol)
+#    unix_socket →  http1 (only HTTP/1.1 is supported over Unix sockets)
+# --------------------------------------------------------------------------
+
+
+# ── Example 1: Unix domain socket backend ─────────────────────────────────
+#
+# Lowest latency option for co-located backends.  No TCP overhead, no TLS.
+# The socket path must be writable by the aegira process.
+
+[[backend]]
+name = "app_main"
+
+# Address of the upstream server.
+#   TCP:  "127.0.0.1:8080", "[::1]:8080", "backend.internal:8080"
+#   Unix: "unix:///run/app.sock"
+backend_address = "unix:///run/app.sock"
+
+# Transport to use when connecting to the backend.
+#   "plain_http"  — unencrypted HTTP over TCP
+#   "tls"         — HTTPS; aegira performs a TLS handshake to the backend
+#   "unix_socket" — Unix domain socket (unencrypted, local only)
+forward_using = "unix_socket"
+
+# Wire protocol to speak with the backend.
+#   "http1" — HTTP/1.1
+#   "http2" — HTTP/2 (h2 over TLS, h2c over plain_http)
+#   "http3" — HTTP/3 over QUIC (requires forward_using = "tls"; not yet
+#             available in the stable build)
+#   "auto"  — negotiate via ALPN when forward_using = "tls"; falls back
+#             to http1 for plain_http and unix_socket
+backend_protocol = "http1"
+
+# --- Timeouts ---------------------------------------------------------------
+#
+# All timeout fields are optional.  Omitting a timeout disables it (no limit).
+# Duration strings: "3s", "500ms", "1m30s", etc.
+
+# Maximum time to wait for the TCP / Unix socket connection to establish.
+connect_timeout = "3s"
+
+# Maximum time to wait for the TLS handshake to the backend to complete.
+# Only relevant when forward_using = "tls".  Ignored otherwise.
+# tls_handshake_timeout = "5s"
+
+# Maximum time to wait for the first response header byte from the backend
+# after the full request has been sent.  Protects against hung backends.
+response_header_timeout = "10s"
+
+# --- Connection pooling ------------------------------------------------------
+
+# Reuse idle backend connections across requests (HTTP keep-alive).
+keepalive = true
+
+# Close pooled connections that have been idle longer than this duration.
+keepalive_idle_timeout = "90s"
+
+# Maximum number of idle connections to keep in the pool for this backend.
+# Excess connections are closed immediately after use.
+max_idle_connections = 128
+
+# --- Retry behaviour ---------------------------------------------------------
+#
+# Retries apply to connection-level errors (refused, reset, timeout), not
+# to HTTP error responses.  The backend must be idempotent-safe for retries
+# to be correct.
+
+# Retry failed requests to this backend.
+retry_requests = true
+
+# Maximum number of retry attempts (in addition to the initial attempt).
+retry_count = 2
+
+# Only retry idempotent HTTP methods (GET, HEAD, OPTIONS, PUT, DELETE).
+# When false, non-idempotent methods (POST, PATCH) are also retried.
+# Set to false only if the backend is designed to handle duplicate delivery.
+retry_only_if_idempotent = true
+
+# --- Reload behaviour --------------------------------------------------------
+
+# Drain in-flight connections to this backend during a SIGHUP reload.
+# When true, existing requests are allowed to complete but no new requests
+# are sent to the old connection pool.  New requests use the freshly
+# loaded backend configuration.
+drain_on_reload = true
+
+
+# ── Example 2: Plain HTTP backend (honeypot) ────────────────────────────────
+#
+# A minimal backend for capturing suspicious traffic.  No TLS, no retries.
+# Receives requests that matched a rule with action = "forward".
+
+[[backend]]
+name = "honeypot"
+
+# TCP address (host:port).  IPv6 addresses use bracket notation: "[::1]:9999".
+backend_address = "127.0.0.1:9999"
+
+# Unencrypted HTTP.  Suitable for backends on the same host or on a
+# trusted network segment.  Do NOT use across untrusted networks.
+forward_using = "plain_http"
+
+# HTTP/1.1 — the only protocol guaranteed to work over plain TCP.
+# Use "http2" here only if the backend explicitly supports h2c
+# (cleartext HTTP/2 via the Upgrade or prior-knowledge mechanism).
+backend_protocol = "http1"
+
+connect_timeout         = "3s"
+response_header_timeout = "10s"
+keepalive               = true
+keepalive_idle_timeout  = "30s"
+max_idle_connections    = 16
+retry_requests          = false  # honeypot: no retries needed
+drain_on_reload         = true
+
+
+# ── Example 3: TLS backend with certificate verification ────────────────────
+#
+# Connects to a remote backend over HTTPS.  Full certificate verification,
+# custom CA, ALPN protocol negotiation.
+
+[[backend]]
+name = "api_main"
+
+# Remote TCP address.
+backend_address = "10.0.0.10:443"
+
+# Encrypted transport.  Aegira performs a TLS handshake to the backend.
+forward_using = "tls"
+
+# "auto" uses ALPN to negotiate the best protocol the backend supports
+# (h2 preferred, http/1.1 fallback).  This is the recommended setting
+# for TLS backends.
+backend_protocol = "auto"
+
+# --- TLS-to-backend settings ------------------------------------------------
+#
+# These fields are only relevant when forward_using = "tls".  They are
+# silently ignored for plain_http and unix_socket backends.
+
+# SNI name to send in the TLS ClientHello to the backend.  Defaults to the
+# hostname portion of backend_address when omitted.  Override this when the
+# backend's certificate uses a different CN/SAN than its network address.
+backend_server_name = "api.internal.example.com"
+
+# Verify the backend's TLS certificate chain against the system trust store
+# (or backend_ca_file when set).  Disabling this is a security risk and
+# should only be done in development / testing environments.
+verify_backend_certificate = true
+
+# Path to a PEM CA bundle for backend certificate verification.  When set,
+# only this CA is trusted for this backend (the system trust store is not
+# consulted).  Useful for internal PKI.
+backend_ca_file = "/etc/aegira/certs/internal-ca.pem"
+
+# Present a client certificate (mutual TLS / mTLS) to the backend.  Uses
+# the listener's TLS certificate and private key.  Enable this when the
+# backend requires client authentication.
+# present_client_certificate = false
+
+connect_timeout          = "3s"
+tls_handshake_timeout    = "5s"   # TLS backends: set an explicit handshake timeout
+response_header_timeout  = "10s"
+keepalive                = true
+keepalive_idle_timeout   = "90s"
+max_idle_connections     = 128
+retry_requests           = true
+retry_count              = 2
+retry_only_if_idempotent = true
+drain_on_reload          = true
+
+
+# --------------------------------------------------------------------------
+#  [[route]]  Path-based routing
+#
+#  Every request must match exactly one route; the engine errors if none
+#  matches.  Define at least one catch-all route ("/" prefix) per site.
+#
+#  When multiple routes match the same host, the longest path_prefix wins.
+#  The route's host must match a configured [[site]].server_name, and
+#  forward_to must name a configured [[backend]].
+# --------------------------------------------------------------------------
+
+# Catch-all for the primary site.
+[[route]]
+host        = "example.com"
+path_prefix = "/"
+forward_to  = "app_main"
+
+# API sub-path routed to a different backend.
+[[route]]
+host        = "example.com"
+path_prefix = "/api/v2/"
+forward_to  = "api_main"
+
+# Catch-all for the API site.
+[[route]]
+host        = "api.example.com"
+path_prefix = "/"
+forward_to  = "api_main"
+
+
+# --------------------------------------------------------------------------
+#  [logging]  Structured logging
+# --------------------------------------------------------------------------
+[logging]
+
+# Output format.
+# "json" — one JSON object per line (machine-parsable, recommended)
+# "text" — human-readable key=value format
+format = "json"
+
+# Where to write log output.
+# "stdout" — standard output (works with systemd, Docker, journald)
+# "file"   — write to the path in `file` below
+# "both"   — write to both stdout and the file
+write_to = "stdout"
+
+# Path to the log file (only used when write_to = "file" or "both").
+file = ""
+
+# Minimum log level.  "trace", "debug", "info", "warn", "error".
+level = "info"
+
+# --- Privacy / PCI redaction ---
+
+# Replace Cookie header values with "[REDACTED]" in audit logs.
+redact_cookies = true
+
+# Replace Authorization header values with "[REDACTED]" in audit logs.
+redact_authorization_header = true
+
+# Replace Set-Cookie response header values with "[REDACTED]" in audit logs.
+redact_set_cookie_header = true

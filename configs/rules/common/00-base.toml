@@ -1,0 +1,46 @@
+[[rule]]
+id          = 1001
+name        = "sql_union_select"
+description = "UNION-based SQL injection probe in query string or body."
+tags        = ["sqli", "owasp-a03"]
+when        = ["query_string", "body"]
+match       = "(?i)union[\\s/\\*]+select"
+action      = "drop"
+priority    = 100
+score       = 10
+
+  [[rule.test]]
+  input  = "id=1 UNION SELECT username,password FROM users"
+  target = "query_string"
+  expect = "match"
+
+  [[rule.test]]
+  input  = "id=1 UNION/**/SELECT 1,2,3"
+  target = "body"
+  expect = "match"
+
+  [[rule.test]]
+  input  = "search=hello+world"
+  target = "query_string"
+  expect = "no_match"
+
+[[rule]]
+id          = 1002
+name        = "scanner_probe"
+description = "Common scanner user-agent strings."
+tags        = ["recon", "scanner"]
+when        = ["headers", "query_string"]
+match       = "(?i)(acunetix|sqlmap|nikto)"
+action      = "forward"
+priority    = 50
+score       = 0
+
+  [[rule.test]]
+  input  = "User-Agent: sqlmap/1.5"
+  target = "headers"
+  expect = "match"
+
+  [[rule.test]]
+  input  = "User-Agent: Mozilla/5.0"
+  target = "headers"
+  expect = "no_match"

@@ -1,0 +1,17 @@
+# Local, environment-specific rule overrides.
+# Load last; use to disable or tune rules for this deployment.
+#
+# To disable a rule globally, add its id to [waf] disabled_rules in aegira.toml.
+# To disable a rule for one site only, add its id to that [[site]]'s disabled_rules.
+#
+# Example rule:
+# [[rule]]
+# id          = 9900001
+# name        = "local_debug_probe"
+# description = "Flag requests to /debug in this environment."
+# tags        = ["local"]
+# when        = ["path"]
+# match       = "^/debug"
+# action      = "log"
+# priority    = 1000
+# score       = 0

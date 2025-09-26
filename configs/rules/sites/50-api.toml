@@ -1,0 +1,25 @@
+[[rule]]
+id          = 2001
+name        = "api_admin_probe"
+description = "Access attempt to admin path on API endpoints."
+tags        = ["recon", "access-control"]
+when        = ["path"]
+match       = "(?i)^/admin"
+action      = "log"
+priority    = 25
+score       = 5
+
+  [[rule.test]]
+  input  = "/admin/users"
+  target = "path"
+  expect = "match"
+
+  [[rule.test]]
+  input  = "/Admin"
+  target = "path"
+  expect = "match"
+
+  [[rule.test]]
+  input  = "/api/v1/users"
+  target = "path"
+  expect = "no_match"
