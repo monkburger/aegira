@@ -4,6 +4,9 @@ Aegira is a WAF (Web Application Firewall) with an integrated TLS-terminating re
 
 Aegira is not an API gateway. It does not handle authentication, issue tokens, manage API keys, split traffic by weight, or speak to identity providers. It inspects requests and enforces policy. The proxy is the transport layer; the WAF is the product.
 
+**AEGIRA IS IN BETA** 
+
+
 ## Purpose
 
 Most WAF deployments bolt filtering onto an existing proxy as a plugin or Lua script. Aegira is built the other way: the WAF decision is the first-class operation and the proxy is the transport layer. Every request goes through `Engine::evaluate` before a single byte is forwarded. Rules are structured data, not stringly-typed config; scoring, action, and target backend are all typed at load time.
