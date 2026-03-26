@@ -428,6 +428,11 @@ pub struct Backend {
     pub retry_count: Option<u32>,
     pub retry_only_if_idempotent: Option<bool>,
     pub drain_on_reload: Option<bool>,
+    /// Reuse a shared HTTP client with connection pooling for this
+    /// backend.  Defaults to true.  Set to false for backends that
+    /// misbehave with persistent connections or require a fresh TCP
+    /// socket per request.
+    pub reuse_connections: Option<bool>,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -756,6 +761,7 @@ mod tests {
                     retry_count: None,
                     retry_only_if_idempotent: None,
                     drain_on_reload: None,
+                    reuse_connections: None,
                 },
                 Backend {
                     name: "api".into(),
@@ -776,6 +782,7 @@ mod tests {
                     retry_count: None,
                     retry_only_if_idempotent: None,
                     drain_on_reload: None,
+                    reuse_connections: None,
                 },
             ],
             routes: vec![
