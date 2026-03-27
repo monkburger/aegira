@@ -393,6 +393,7 @@ mod tests {
                     retry_count: None,
                     retry_only_if_idempotent: None,
                     drain_on_reload: None,
+                    reuse_connections: None,
                 },
                 Backend {
                     name: "honeypot".into(),
@@ -413,6 +414,7 @@ mod tests {
                     retry_count: None,
                     retry_only_if_idempotent: None,
                     drain_on_reload: None,
+                    reuse_connections: None,
                 },
             ],
             routes: vec![Route {

@@ -608,6 +608,13 @@ retry_only_if_idempotent = true
 # loaded backend configuration.
 drain_on_reload = true
 
+# Reuse a shared HTTP client with connection pooling (TCP keep-alive)
+# for this backend.  Default: true.  Set to false for backends that
+# misbehave with persistent connections or require a fresh TCP socket
+# per request.  When false, a new HTTP client is constructed on every
+# proxied request (~1.8 us overhead + no connection pooling).
+# reuse_connections = true
+
 
 # ── Example 2: Plain HTTP backend (honeypot) ────────────────────────────────
 #

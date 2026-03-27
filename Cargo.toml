@@ -50,3 +50,8 @@ h3-quinn = "0.0.10"
 base64 = "0.22"
 rcgen = "0.13"
 serial_test = "3"
+criterion = { version = "0.5", features = ["html_reports", "async_tokio"] }
+
+[[bench]]
+name = "client_reuse"
+harness = false
